@@ -1,68 +1,46 @@
+from flask import Flask, request
 import os
-import requests
-from flask import Flask
-from twilio.rest import Client
-from bs4 import BeautifulSoup
+import telnyx
 
 app = Flask(__name__)
 
-# Twilio config (set in Render env vars)
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_FROM = os.getenv("TWILIO_PHONE_NUMBER")
-MY_PHONE = os.getenv("MY_PHONE_NUMBER")
-
-# Keep track of last headline sent
-last_headline = None
-
-def get_latest_story():
-    url = "https://nypost.com/entertainment/"
-    resp = requests.get(url, timeout=10)
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # NY Post headlines are usually in <h3> or <h4>
-    article = soup.find("article")
-    if not article:
-        return None, None
-
-    headline = article.get_text(strip=True)
-    img = None
-    img_tag = article.find("img")
-    if img_tag:
-        img = img_tag.get("src")
-
-    return headline, img
-
-def send_sms(headline, img_url):
-    client = Client(TWILIO_SID, TWILIO_AUTH)
-    message_body = f"NYPost Entertainment Update:\n{headline}"
-    if img_url:
-        client.messages.create(
-            body=message_body,
-            from_=TWILIO_FROM,
-            to=MY_PHONE,
-            media_url=[img_url]
-        )
-    else:
-        client.messages.create(
-            body=message_body,
-            from_=TWILIO_FROM,
-            to=MY_PHONE
-        )
-
-@app.route("/check", methods=["GET"])
-def check_news():
-    global last_headline
-    headline, img = get_latest_story()
-    if headline and headline != last_headline:
-        send_sms(headline, img)
-        last_headline = headline
-        return f"Sent update: {headline}", 200
-    return "No new updates", 200
+# Set your API key directly from the environment variable.
+telnyx.api_key = os.environ.get("TELNYX_API_KEY")
 
 @app.route("/")
-def home():
-    return "NYPost Twilio bot is running", 200
+def hello_world():
+    return "Hello from your Telnyx Webhook!"
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    # We are removing webhook signature verification to get the app working.
+    # We will need to re-add this later for security.
+    event = request.json['data']
+
+    if event['event_type'] == 'message.received':
+        from_number = event['payload']['from']['phone_number']
+        to_number = event['payload']['to'][0]['phone_number']
+        message_text = event['payload']['text']
+
+        # Log the received message for debugging
+        print(f"Received message from {from_number}: {message_text}")
+        
+        # This new log will show you the numbers being used in the API call
+        print(f"Attempting to send reply from {to_number} to {from_number}")
+
+        try:
+            # Send a reply back using the API key
+            telnyx.Message.create(
+                to=[from_number],
+                from_=to_number,
+                text=f'Hello! I received your message: "{message_text}". Thank you for reaching out!'
+            )
+            print("Successfully sent reply message.")
+        except Exception as e:
+            # This error will show up in your Render logs
+            print(f"Failed to send reply: {e}")
+
+    return '', 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))
